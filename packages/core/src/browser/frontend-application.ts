@@ -26,6 +26,8 @@ import { preventNavigation, parseCssTime, animationFrame } from './browser';
 import { CorePreferences } from './core-preferences';
 import { WindowService } from './window/window-service';
 import { TooltipService } from './tooltip-service';
+import { WindowTitleService } from './window/window-title-service';
+import { FrontendApplicationConfigProvider } from './frontend-application-config-provider';
 
 /**
  * Clients can implement to get a callback for contributing widgets to a shell on start.
@@ -128,6 +130,9 @@ export class FrontendApplication {
     @inject(WindowService)
     protected readonly windowsService: WindowService;
 
+    @inject(WindowTitleService)
+    protected readonly windowTitleService: WindowTitleService;
+
     @inject(TooltipService)
     protected readonly tooltipService: TooltipService;
 
@@ -163,6 +168,7 @@ export class FrontendApplication {
      */
     async start(): Promise<void> {
         const startup = this.backendStopwatch.start('frontend');
+        this.registerApplicationTitle();
 
         await this.measure('startContributions', () => this.startContributions(), 'Start frontend contributions', false);
         this.stateService.state = 'started_contributions';
@@ -222,6 +228,17 @@ export class FrontendApplication {
         });
     }
     /* ^^^ HOTFIX end ^^^ */
+
+    protected registerApplicationTitle(): void {
+        this.windowTitleService.onDidChangeTitle(title => {
+            document.title = title;
+        });
+        this.windowTitleService.registerPart({
+            id: 'application-name',
+            priority: 0,
+            value: FrontendApplicationConfigProvider.get().applicationName
+        });
+    }
 
     /**
      * Register global event listeners.

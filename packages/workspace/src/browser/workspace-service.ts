@@ -28,9 +28,9 @@ import { ILogger, Disposable, DisposableCollection, Emitter, Event, MaybePromise
 import { WorkspacePreferences } from './workspace-preferences';
 import * as jsoncparser from 'jsonc-parser';
 import * as Ajv from '@theia/core/shared/ajv';
-import { FrontendApplicationConfigProvider } from '@theia/core/lib/browser/frontend-application-config-provider';
 import { FileStat, BaseStat } from '@theia/filesystem/lib/common/files';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
+import { WindowTitleService } from '@theia/core/lib/browser/window/window-title-service';
 import { FileSystemPreferences } from '@theia/filesystem/lib/browser';
 import { workspaceSchema, WorkspaceSchemaUpdater } from './workspace-schema-updater';
 import { IJSONSchema } from '@theia/core/lib/common/json-schema';
@@ -85,7 +85,8 @@ export class WorkspaceService implements FrontendApplicationContribution {
     @inject(CommonWorkspaceUtils)
     protected readonly utils: CommonWorkspaceUtils;
 
-    protected applicationName: string;
+    @inject(WindowTitleService)
+    protected readonly windowTitleService: WindowTitleService;
 
     protected _ready = new Deferred<void>();
     get ready(): Promise<void> {
@@ -94,7 +95,11 @@ export class WorkspaceService implements FrontendApplicationContribution {
 
     @postConstruct()
     protected async init(): Promise<void> {
-        this.applicationName = FrontendApplicationConfigProvider.get().applicationName;
+        this.windowTitleService.registerPart({
+            id: 'current-workspace',
+            priority: 200,
+            event: this.onDidChangeWorkspaceName
+        });
         const wsUriString = await this.getDefaultWorkspaceUri();
         const wsStat = await this.toFileStat(wsUriString);
         await this.setWorkspace(wsStat);
@@ -196,6 +201,11 @@ export class WorkspaceService implements FrontendApplicationContribution {
         return this.onWorkspaceLocationChangedEmitter.event;
     }
 
+    protected readonly onDidChangeWorkspaceNameEmitter = new Emitter<string | undefined>();
+    get onDidChangeWorkspaceName(): Event<string | undefined> {
+        return this.onDidChangeWorkspaceNameEmitter.event;
+    }
+
     protected readonly toDisposeOnWorkspace = new DisposableCollection();
     protected async setWorkspace(workspaceStat: FileStat | undefined): Promise<void> {
         if (this._workspace && workspaceStat &&
@@ -291,11 +301,6 @@ export class WorkspaceService implements FrontendApplicationContribution {
         }
     }
 
-    protected formatTitle(title?: string): string {
-        const name = this.applicationName;
-        return title ? `${title} — ${name}` : name;
-    }
-
     protected updateTitle(): void {
         let title: string | undefined;
         if (this._workspace) {
@@ -306,7 +311,7 @@ export class WorkspaceService implements FrontendApplicationContribution {
                 title = displayName;
             }
         }
-        document.title = this.formatTitle(title);
+        this.onDidChangeWorkspaceNameEmitter.fire(title);
     }
 
     /**
