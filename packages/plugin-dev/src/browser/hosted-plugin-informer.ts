@@ -60,10 +60,8 @@ export class HostedPluginInformer implements FrontendApplicationContribution {
     public initialize(): void {
         this.hostedPluginServer.getHostedPlugin().then(pluginMetadata => {
             if (pluginMetadata) {
-                this.windowTitleService.registerPart({
-                    id: 'development-host',
-                    priority: 500,
-                    value: HostedPluginInformer.DEVELOPMENT_HOST_TITLE
+                this.windowTitleService.update({
+                    developmentHost: HostedPluginInformer.DEVELOPMENT_HOST_TITLE
                 });
 
                 this.entry = {

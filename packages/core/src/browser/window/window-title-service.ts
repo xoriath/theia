@@ -14,23 +14,56 @@
 // SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
 // *****************************************************************************
 
-import { injectable } from 'inversify';
+import { inject, injectable, postConstruct } from 'inversify';
+import { escapeRegExpCharacters } from '../../common/strings';
 import { Emitter, Event } from '../../common/event';
+import { PreferenceService } from '../preferences';
 
-export interface WindowTitlePart {
-    id?: string
-    value?: string
-    priority?: number
-    event?: Event<string | undefined>
-}
+export const InitialWindowTitleParts = {
+    'activeEditorShort': '',
+    'activeEditorMedium': '',
+    'activeEditorLong': '',
+    'activeFolderShort': '',
+    'activeFolderMedium': '',
+    'activeFolderLong': '',
+    'folderName': '',
+    'folderPath': '',
+    'rootName': '',
+    'rootPath': '',
+    'appName': '',
+    'remoteName': '',
+    'dirty': '',
+    'developmentHost': ''
+};
 
 @injectable()
 export class WindowTitleService {
 
+    @inject(PreferenceService)
+    protected readonly preferenceService: PreferenceService;
+
     protected _title = '';
+    protected titleTemplate?: string;
 
     protected onDidChangeTitleEmitter = new Emitter<string>();
-    protected titleParts: WindowTitlePart[] = [];
+    protected titleParts = new Map<string, string | undefined>(Object.entries(InitialWindowTitleParts));
+    protected separator = ' - ';
+
+    @postConstruct()
+    protected init(): void {
+        this.titleTemplate = this.preferenceService.get('window.title') as string;
+        this.separator = this.preferenceService.get('window.titleSeparator') as string;
+        this.updateTitle();
+        this.preferenceService.onPreferenceChanged(e => {
+            if (e.preferenceName === 'window.title') {
+                this.titleTemplate = e.newValue;
+                this.updateTitle();
+            } else if (e.preferenceName === 'window.titleSeparator') {
+                this.separator = e.newValue;
+                this.updateTitle();
+            }
+        });
+    }
 
     get onDidChangeTitle(): Event<string> {
         return this.onDidChangeTitleEmitter.event;
@@ -40,28 +73,33 @@ export class WindowTitleService {
         return this._title;
     }
 
-    registerPart(titlePart: WindowTitlePart): void {
-        this.titleParts.push(titlePart);
-        titlePart.event?.(title => {
-            titlePart.value = title;
-            this.updateTitle();
-        });
-        if (titlePart.value) {
-            this.updateTitle();
+    update(parts: Record<string, string | undefined>): void {
+        for (const [key, value] of Object.entries(parts)) {
+            this.titleParts.set(key, value);
         }
-    }
-
-    unregisterPart(id: string): void {
-        const index = this.titleParts.findIndex(e => e.id === id);
-        if (index >= 0) {
-            this.titleParts.splice(index, 1);
-            this.updateTitle();
-        }
+        this.updateTitle();
     }
 
     protected updateTitle(): void {
-        const sortedParts = this.titleParts.sort((a, b) => (b.priority ?? 100) - (a.priority ?? 100));
-        this._title = sortedParts.map(e => e.value).filter(e => e).join(' - ');
+        if (!this.titleTemplate) {
+            this._title = '';
+        } else {
+            let title = this.titleTemplate;
+            for (const [key, value] of this.titleParts.entries()) {
+                if (key !== 'developmentHost') {
+                    const label = `$\{${key}\}`;
+                    const regex = new RegExp(escapeRegExpCharacters(label), 'g');
+                    title = title.replace(regex, value ?? '');
+                }
+            }
+            const separatedTitle = title.split('${separator}').filter(e => e.length > 0);
+            this._title = separatedTitle.join(this.separator);
+        }
+        const developmentHost = this.titleParts.get('developmentHost');
+        if (developmentHost) {
+            this._title = developmentHost + this.separator + this._title;
+        }
+        document.title = this._title;
         this.onDidChangeTitleEmitter.fire(this._title);
     }
 

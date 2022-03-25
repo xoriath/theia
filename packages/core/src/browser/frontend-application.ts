@@ -230,13 +230,8 @@ export class FrontendApplication {
     /* ^^^ HOTFIX end ^^^ */
 
     protected registerApplicationTitle(): void {
-        this.windowTitleService.onDidChangeTitle(title => {
-            document.title = title;
-        });
-        this.windowTitleService.registerPart({
-            id: 'application-name',
-            priority: 0,
-            value: FrontendApplicationConfigProvider.get().applicationName
+        this.windowTitleService.update({
+            appName: FrontendApplicationConfigProvider.get().applicationName
         });
     }
 

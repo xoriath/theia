@@ -38,7 +38,6 @@ import { waitForRevealed, waitForClosed } from '../widgets';
 import { CorePreferences } from '../core-preferences';
 import { BreadcrumbsRendererFactory } from '../breadcrumbs/breadcrumbs-renderer';
 import { Deferred } from '../../common/promise-util';
-import { WindowTitleService } from '../window/window-title-service';
 
 /** The class name added to ApplicationShell instances. */
 const APPLICATION_SHELL_CLASS = 'theia-ApplicationShell';
@@ -189,9 +188,6 @@ export class ApplicationShell extends Widget {
     @inject(ContextKeyService)
     protected readonly contextKeyService: ContextKeyService;
 
-    @inject(WindowTitleService)
-    protected readonly windowTitleService: WindowTitleService;
-
     protected readonly onDidAddWidgetEmitter = new Emitter<Widget>();
     readonly onDidAddWidget = this.onDidAddWidgetEmitter.event;
     protected fireDidAddWidget(widget: Widget): void {
@@ -209,9 +205,6 @@ export class ApplicationShell extends Widget {
 
     protected readonly onDidChangeCurrentWidgetEmitter = new Emitter<FocusTracker.IChangedArgs<Widget>>();
     readonly onDidChangeCurrentWidget = this.onDidChangeCurrentWidgetEmitter.event;
-
-    protected readonly onDidChangeMainAreaWidgetNameEmitter = new Emitter<string | undefined>();
-    readonly onDidChangeMainAreaWidgetName = this.onDidChangeMainAreaWidgetNameEmitter.event;
 
     /**
      * Construct a new application shell.
@@ -231,7 +224,6 @@ export class ApplicationShell extends Widget {
     @postConstruct()
     protected init(): void {
         this.initializeShell();
-        this.initializeTitle();
         this.initSidebarVisibleKeyContext();
         this.initFocusKeyContexts();
 
@@ -245,27 +237,6 @@ export class ApplicationShell extends Widget {
                 }
             });
         }
-    }
-
-    protected initializeTitle(): void {
-        this.windowTitleService.registerPart({
-            id: 'main-area-widget',
-            priority: 300,
-            event: this.onDidChangeMainAreaWidgetName
-        });
-        this.onDidChangeActiveWidget(args => {
-            if (args.newValue) {
-                const area = this.getAreaFor(args.newValue);
-                if (area === 'main') {
-                    this.onDidChangeMainAreaWidgetNameEmitter.fire(args.newValue.title.label);
-                }
-            }
-        });
-        this.onDidRemoveWidget(() => {
-            if (!this.mainPanel.widgets().next()) {
-                this.onDidChangeMainAreaWidgetNameEmitter.fire(undefined);
-            }
-        });
     }
 
     protected initializeShell(): void {
@@ -733,8 +704,6 @@ export class ApplicationShell extends Widget {
             this.mainPanel.restoreLayout(mainPanel);
             this.registerWithFocusTracker(mainPanel.main);
             const widgets = toArray(this.mainPanel.widgets());
-            const currentMainAreaWidget = this.getCurrentWidget('main') || widgets[0];
-            this.onDidChangeMainAreaWidgetNameEmitter.fire(currentMainAreaWidget?.title.label);
             if (mainPanelPinned && mainPanelPinned.length === widgets.length) {
                 widgets.forEach((a, i) => {
                     if (mainPanelPinned[i]) {

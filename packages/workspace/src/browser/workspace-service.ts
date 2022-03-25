@@ -20,7 +20,7 @@ import { WorkspaceServer, THEIA_EXT, CommonWorkspaceUtils } from '../common';
 import { WindowService } from '@theia/core/lib/browser/window/window-service';
 import { DEFAULT_WINDOW_HASH } from '@theia/core/lib/common/window';
 import {
-    FrontendApplicationContribution, PreferenceServiceImpl, PreferenceScope, PreferenceSchemaProvider, LabelProvider
+    FrontendApplicationContribution, PreferenceServiceImpl, PreferenceScope, PreferenceSchemaProvider, LabelProvider, ApplicationShell, Widget, Navigatable
 } from '@theia/core/lib/browser';
 import { Deferred } from '@theia/core/lib/common/promise-util';
 import { EnvVariablesServer } from '@theia/core/lib/common/env-variables';
@@ -85,6 +85,9 @@ export class WorkspaceService implements FrontendApplicationContribution {
     @inject(CommonWorkspaceUtils)
     protected readonly utils: CommonWorkspaceUtils;
 
+    @inject(ApplicationShell)
+    protected readonly applicationShell: ApplicationShell;
+
     @inject(WindowTitleService)
     protected readonly windowTitleService: WindowTitleService;
 
@@ -95,15 +98,13 @@ export class WorkspaceService implements FrontendApplicationContribution {
 
     @postConstruct()
     protected async init(): Promise<void> {
-        this.windowTitleService.registerPart({
-            id: 'current-workspace',
-            priority: 200,
-            event: this.onDidChangeWorkspaceName
-        });
         const wsUriString = await this.getDefaultWorkspaceUri();
         const wsStat = await this.toFileStat(wsUriString);
         await this.setWorkspace(wsStat);
 
+        this.applicationShell.onDidChangeActiveWidget(tracked => {
+            this.updateTitleWidget(tracked.newValue ?? undefined);
+        });
         this.fileService.onDidFilesChange(event => {
             if (this._workspace && this._workspace.isFile && event.contains(this._workspace.resource)) {
                 this.updateWorkspace();
@@ -201,11 +202,6 @@ export class WorkspaceService implements FrontendApplicationContribution {
         return this.onWorkspaceLocationChangedEmitter.event;
     }
 
-    protected readonly onDidChangeWorkspaceNameEmitter = new Emitter<string | undefined>();
-    get onDidChangeWorkspaceName(): Event<string | undefined> {
-        return this.onDidChangeWorkspaceNameEmitter.event;
-    }
-
     protected readonly toDisposeOnWorkspace = new DisposableCollection();
     protected async setWorkspace(workspaceStat: FileStat | undefined): Promise<void> {
         if (this._workspace && workspaceStat &&
@@ -301,17 +297,46 @@ export class WorkspaceService implements FrontendApplicationContribution {
         }
     }
 
-    protected updateTitle(): void {
-        let title: string | undefined;
-        if (this._workspace) {
-            const displayName = this._workspace.name;
-            if (this.isWorkspaceFile(this._workspace)) {
-                title = this.isUntitledWorkspace(this._workspace.resource) ? nls.localizeByDefault('Untitled (Workspace)') : displayName.slice(0, displayName.lastIndexOf('.'));
-            } else {
-                title = displayName;
+    protected updateTitleWidget(widget?: Widget): void {
+        let folderName: string | undefined;
+        let folderPath: string | undefined;
+        if (Navigatable.is(widget)) {
+            const folder = this.getWorkspaceRootUri(widget.getResourceUri());
+            if (folder) {
+                folderName = this.labelProvider.getName(folder);
+                folderPath = folder.path.toString();
             }
         }
-        this.onDidChangeWorkspaceNameEmitter.fire(title);
+        this.windowTitleService.update({
+            folderName,
+            folderPath
+        });
+    }
+
+    protected updateTitle(): void {
+        let rootName: string | undefined;
+        let rootPath: string | undefined;
+        if (this._workspace) {
+            const displayName = this._workspace.name;
+            const fullName = this._workspace.resource.path.toString();
+            if (this.isWorkspaceFile(this._workspace)) {
+                if (this.isUntitledWorkspace(this._workspace.resource)) {
+                    const untitled = nls.localizeByDefault('Untitled (Workspace)');
+                    rootName = untitled;
+                    rootPath = untitled;
+                } else {
+                    rootName = displayName.slice(0, displayName.lastIndexOf('.'));
+                    rootPath = fullName.slice(0, fullName.lastIndexOf('.'));
+                }
+            } else {
+                rootName = displayName;
+                rootPath = fullName;
+            }
+        }
+        this.windowTitleService.update({
+            rootName,
+            rootPath
+        });
     }
 
     /**
