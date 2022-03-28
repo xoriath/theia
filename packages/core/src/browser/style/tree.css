@@ -92,6 +92,8 @@
 .theia-Tree .ReactVirtualized__List:focus .theia-TreeNode.theia-mod-selected {
     background: var(--theia-list-activeSelectionBackground);
     color: var(--theia-list-activeSelectionForeground) !important;
+    outline: 1px solid var(--theia-focusBorder);
+    outline-offset: -1px;
 }
 
 .theia-Tree:focus .theia-TreeNode.theia-mod-selected .theia-TreeNodeTail,
