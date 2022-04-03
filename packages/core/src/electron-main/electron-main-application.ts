@@ -21,7 +21,7 @@ import * as path from 'path';
 import { Argv } from 'yargs';
 import { AddressInfo } from 'net';
 import { promises as fs } from 'fs';
-import { fork, ForkOptions } from 'child_process';
+import { ChildProcess, fork, ForkOptions } from 'child_process';
 import { FrontendApplicationConfig } from '@theia/application-package/lib/application-props';
 import URI from '../common/uri';
 import { FileUri } from '../node/file-uri';
@@ -31,7 +31,7 @@ import { ContributionProvider } from '../common/contribution-provider';
 import { ElectronSecurityTokenService } from './electron-security-token-service';
 import { ElectronSecurityToken } from '../electron-common/electron-token';
 import Storage = require('electron-store');
-import { Disposable, DisposableCollection, isOSX, isWindows } from '../common';
+import { Disposable, DisposableCollection, is, isOSX, isWindows } from '../common';
 import {
     RequestTitleBarStyle,
     Restart, StopReason,
@@ -42,8 +42,11 @@ import { DEFAULT_WINDOW_HASH } from '../common/window';
 import { TheiaBrowserWindowOptions, TheiaElectronWindow, TheiaElectronWindowFactory } from './theia-electron-window';
 import { ElectronMainApplicationGlobals } from './electron-main-constants';
 import { createDisposableListener } from './event-utils';
+import { BackendStartIpcMessage, IpcMessage } from 'src/common/messaging/ipc-messaging';
 
 export { ElectronMainApplicationGlobals };
+import { ElectronMainMessagingService } from './messaging/electron-main-messaging-service';
+import { cluster } from '../node';
 
 const createYargs: (argv?: string[], cwd?: string) => Argv = require('yargs/yargs');
 
@@ -167,6 +170,9 @@ export class ElectronMainApplication {
     @inject(ElectronMainProcessArgv)
     protected processArgv: ElectronMainProcessArgv;
 
+    @inject(ElectronMainMessagingService)
+    protected readonly mainMessagingService: ElectronMainMessagingService;
+
     @inject(ElectronSecurityTokenService)
     protected electronSecurityTokenService: ElectronSecurityTokenService;
 
@@ -180,14 +186,22 @@ export class ElectronMainApplication {
         windowstate?: TheiaBrowserWindowOptions
     }>();
 
-    protected readonly _backendPort = new Deferred<number>();
-    readonly backendPort = this._backendPort.promise;
+    protected _backendPort = new Deferred<number>();
+    protected _backendProcess = new Deferred<ChildProcess>();
 
     protected _config: FrontendApplicationConfig | undefined;
     protected useNativeWindowFrame: boolean = true;
     protected didUseNativeWindowFrameOnStart = new Map<number, boolean>();
     protected windows = new Map<number, TheiaElectronWindow>();
     protected restarting = false;
+
+    get backendProcess(): Promise<ChildProcess> {
+        return this._backendProcess.promise;
+    }
+
+    get backendPort(): Promise<number> {
+        return this._backendPort.promise;
+    }
 
     get config(): FrontendApplicationConfig {
         if (!this._config) {
@@ -277,7 +291,6 @@ export class ElectronMainApplication {
                 }
                 options.x = options.x! + 30;
                 options.y = options.y! + 30;
-
             }
         }
         return options;
@@ -429,8 +442,6 @@ export class ElectronMainApplication {
      * @return Running server's port promise.
      */
     protected async startBackend(): Promise<number> {
-        // Check if we should run everything as one process.
-        const noBackendFork = process.argv.indexOf('--no-cluster') !== -1;
         // We cannot use the `process.cwd()` as the application project path (the location of the `package.json` in other words)
         // in a bundled electron application because it depends on the way we start it. For instance, on OS X, these are a differences:
         // https://github.com/eclipse-theia/theia/issues/3297#issuecomment-439172274
@@ -438,26 +449,38 @@ export class ElectronMainApplication {
         // Set the electron version for both the dev and the production mode. (https://github.com/eclipse-theia/theia/issues/3254)
         // Otherwise, the forked backend processes will not know that they're serving the electron frontend.
         process.env.THEIA_ELECTRON_VERSION = process.versions.electron;
-        if (noBackendFork) {
+        if (!cluster) {
+            this._backendProcess.reject(new Error('running the backend in the current process'));
             process.env[ElectronSecurityToken] = JSON.stringify(this.electronSecurityToken);
             // The backend server main file is supposed to export a promise resolving with the port used by the http(s) server.
-            const address: AddressInfo = await require(this.globals.THEIA_BACKEND_MAIN_PATH);
-            return address.port;
+            const { port }: AddressInfo = await require(this.globals.THEIA_BACKEND_MAIN_PATH);
+            return port;
         } else {
             const backendProcess = fork(
                 this.globals.THEIA_BACKEND_MAIN_PATH,
                 this.processArgv.getProcessArgvWithoutBin(),
                 await this.getForkOptions(),
             );
+            this._backendProcess.resolve(backendProcess);
             return new Promise((resolve, reject) => {
-                // The backend server main file is also supposed to send the resolved http(s) server port via IPC.
-                backendProcess.on('message', (address: AddressInfo) => {
-                    resolve(address.port);
-                });
-                backendProcess.on('error', error => {
+                function messageListener(message: IpcMessage): void {
+                    if (is<BackendStartIpcMessage>(message, message.channel === 'backend-start')) {
+                        resolve(message.port);
+                        cleanup();
+                    }
+                };
+                function errorListener(error: unknown): void {
                     reject(error);
-                });
-                app.on('quit', () => {
+                    cleanup();
+                };
+                function cleanup(): void {
+                    backendProcess.off('message', messageListener);
+                    backendProcess.off('error', errorListener);
+                };
+                // The backend server main file is also supposed to send the resolved http(s) server port via IPC.
+                backendProcess.on('message', messageListener);
+                backendProcess.once('error', errorListener);
+                app.once('quit', () => {
                     // Only issue a kill signal if the backend process is running.
                     // eslint-disable-next-line no-null/no-null
                     if (backendProcess.exitCode === null && backendProcess.signalCode === null) {

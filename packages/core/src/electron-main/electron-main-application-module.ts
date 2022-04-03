@@ -16,15 +16,20 @@
 
 import { ContainerModule } from 'inversify';
 import { v4 } from 'uuid';
+import { castConnection, Connection, ContributionFilterRegistry, DeferredConnectionFactory, ProxyProvider, Reflection, ServiceContribution, ServiceProvider } from '../common';
+import { ChannelMessage, DefaultConnectionMultiplexer } from '../common/connection-multiplexer';
 import { bindContributionProvider } from '../common/contribution-provider';
-import { JsonRpcConnectionHandler } from '../common/messaging/proxy-factory';
-import { ElectronSecurityToken } from '../electron-common/electron-token';
+import { JsonRpcProxyProvider } from '../common/json-rpc-proxy-provider';
+import { DefaultReflection } from '../common/reflection';
+import { DefaultServiceProvider } from '../common/service-provider';
+import { ElectronMainAndBackend, ElectronMainAndFrontend } from '../electron-common';
 import { ElectronMainWindowService, electronMainWindowServicePath } from '../electron-common/electron-main-window-service';
+import { ElectronSecurityToken } from '../electron-common/electron-token';
+import { cluster } from '../node';
+import { InProcessProxyProvider } from '../node/in-process-proxy-provider';
+import { NodeIpcConnection } from '../node/messaging/ipc-connection';
 import { ElectronMainApplication, ElectronMainApplicationContribution, ElectronMainProcessArgv } from './electron-main-application';
 import { ElectronMainWindowServiceImpl } from './electron-main-window-service-impl';
-import { ElectronMessagingContribution } from './messaging/electron-messaging-contribution';
-import { ElectronMessagingService } from './messaging/electron-messaging-service';
-import { ElectronConnectionHandler } from '../electron-common/messaging/electron-connection-handler';
 import { ElectronSecurityTokenService } from './electron-security-token-service';
 import { TheiaBrowserWindowOptions, TheiaElectronWindow, TheiaElectronWindowFactory, WindowApplicationConfig } from './theia-electron-window';
 
@@ -33,30 +38,66 @@ const electronSecurityToken: ElectronSecurityToken = { value: v4() };
 (global as any)[ElectronSecurityToken] = electronSecurityToken;
 
 export default new ContainerModule(bind => {
-    bind(ElectronMainApplication).toSelf().inSingletonScope();
-    bind(ElectronMessagingContribution).toSelf().inSingletonScope();
+    // #region constants
     bind(ElectronSecurityToken).toConstantValue(electronSecurityToken);
-    bind(ElectronSecurityTokenService).toSelf().inSingletonScope();
-
-    bindContributionProvider(bind, ElectronConnectionHandler);
-    bindContributionProvider(bind, ElectronMessagingService.Contribution);
-    bindContributionProvider(bind, ElectronMainApplicationContribution);
-
-    bind(ElectronMainApplicationContribution).toService(ElectronMessagingContribution);
-
-    bind(ElectronMainWindowService).to(ElectronMainWindowServiceImpl).inSingletonScope();
-    bind(ElectronConnectionHandler).toDynamicValue(context =>
-        new JsonRpcConnectionHandler(electronMainWindowServicePath,
-            () => context.container.get(ElectronMainWindowService))
-    ).inSingletonScope();
-
-    bind(ElectronMainProcessArgv).toSelf().inSingletonScope();
-
-    bind(TheiaElectronWindow).toSelf();
+    // #endregion
+    // #region transients
+    bind(TheiaElectronWindow).toSelf().inTransientScope();
+    bind(InProcessProxyProvider).toSelf().inTransientScope();
+    // #endregion
+    // #region factories
     bind(TheiaElectronWindowFactory).toFactory(({ container }) => (options, config) => {
         const child = container.createChild();
         child.bind(TheiaBrowserWindowOptions).toConstantValue(options);
         child.bind(WindowApplicationConfig).toConstantValue(config);
         return child.get(TheiaElectronWindow);
     });
+    // #endregion
+    // #region contribution providers
+    bindContributionProvider(bind, ElectronMainApplicationContribution);
+    // #endregion
+    // #region singletons
+    bind(Reflection).to(DefaultReflection).inSingletonScope();
+    bind(ElectronMainProcessArgv).toSelf().inSingletonScope();
+    bind(ElectronMainApplication).toSelf().inSingletonScope();
+    bind(ElectronSecurityTokenService).toSelf().inSingletonScope();
+    bind(ElectronMainWindowService).to(ElectronMainWindowServiceImpl).inSingletonScope();
+    // #endregion
+    // #region ElectronMainAndFrontend
+    bind(ServiceContribution)
+        .toDynamicValue(ctx => ({
+            [electronMainWindowServicePath]: () => ctx.container.get(ElectronMainWindowService)
+        }))
+        .inSingletonScope()
+        .whenTargetNamed(ElectronMainAndFrontend);
+    // #endregion
+    // #region ElectronMainAndBackend
+    bind(ServiceProvider)
+        .toDynamicValue(ctx => {
+            let contributionFilter; try { contributionFilter = ctx.container.get(ContributionFilterRegistry); } catch { }
+            const contributions = ctx.container.getAllNamed(ServiceContribution, ElectronMainAndBackend);
+            return new DefaultServiceProvider(contributionFilter?.applyFilters(contributions, ServiceContribution) ?? contributions);
+        })
+        .inSingletonScope()
+        .whenTargetNamed(ElectronMainAndBackend);
+    bind(ProxyProvider)
+        .toDynamicValue(ctx => {
+            const serviceProvider = ctx.container.getNamed(ServiceProvider, ElectronMainAndBackend);
+            if (cluster) {
+                // Connect to the backend sub-process once spawned:
+                const app = ctx.container.get(ElectronMainApplication);
+                const deferredConnectionFactory = ctx.container.get(DeferredConnectionFactory);
+                const connectionPromise = app.backendProcess.then(
+                    backend => ctx.container.get(NodeIpcConnection).initialize(backend)
+                );
+                const ipcConnection: Connection<ChannelMessage> = castConnection(deferredConnectionFactory(connectionPromise));
+                const multiplexer = new DefaultConnectionMultiplexer().initialize<object>(ipcConnection);
+                return ctx.container.get(JsonRpcProxyProvider).initialize(serviceProvider, multiplexer, multiplexer);
+            } else {
+                return ctx.container.get(InProcessProxyProvider).initialize(ElectronMainAndBackend, serviceProvider);
+            }
+        })
+        .inSingletonScope()
+        .whenTargetNamed(ElectronMainAndBackend);
+    // #endregion
 });

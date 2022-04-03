@@ -51,3 +51,13 @@ export interface CloseRequestArguments {
     cancelChannel: string;
     reason: StopReason;
 }
+
+/**
+ * Represent bindings between the `electron-main` runtime and the `electron-node` (backend) runtime.
+ */
+export const ElectronMainAndBackend: string = 'ElectronMainAndBackend';
+
+/**
+ * Represent bindings between the `electron-main` runtime and the `electron-browser` (frontend) runtime.
+ */
+export const ElectronMainAndFrontend: string = 'ElectronMainAndFrontend';

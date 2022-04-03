@@ -92,7 +92,7 @@ const serverAddress = main.start(serverModule());
 
 serverAddress.then(({ port, address }) => {
     if (process && process.send) {
-        process.send({ port, address });
+        process.send({ channel: 'backend-start', port, address });
     }
 });
 

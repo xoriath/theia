@@ -14,6 +14,8 @@
 // SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
 // *****************************************************************************
 
+import type { interfaces } from 'inversify';
+
 export type Mutable<T> = { -readonly [P in keyof T]: T[P] };
 export type MaybeNull<T> = { [P in keyof T]: T[P] | null };
 export type MaybeUndefined<T> = { [P in keyof T]: T[P] | undefined };
@@ -129,4 +131,45 @@ export namespace ArrayUtils {
  */
 export function unreachable(_never: never, message: string = 'unhandled case'): never {
     throw new Error(message);
+}
+
+export function newableFactory<T, A extends unknown[]>(newable: new (...args: A) => T): (...args: A) => T {
+    return (...args) => new newable(...args);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type MethodNames<T> = { [K in keyof T]: T[K] extends Function ? K : never }[keyof T];
+export function postConstructFactory<T, K extends MethodNames<T> = never>(
+    factory: () => T,
+    postConstructMethodName?: K
+): (...args: T[K] extends (...args2: infer A) => void ? A : never) => T {
+    return (...args) => {
+        const instance = factory();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (instance as any)[postConstructMethodName ?? 'initialize'](...args);
+        return instance;
+    };
+}
+
+const a = postConstructFactory(() => ({
+    initialize(aaa: string, bbb: number): void { }
+} as const), 'initialize');
+
+a('1', 2);
+
+export interface FromFactory<F extends (...args: unknown[]) => unknown> {
+    new(...args: Parameters<F>): ReturnType<F>
+}
+
+/**
+ * Easy coercion function, because TypeScript doesn't provide such a mechanism out of the box...
+ */
+export function is<T>(what: unknown, whatIsT: boolean): what is T;
+export function is<T>(unknown: unknown, predicate: (unknown: Partial<T>) => boolean): unknown is T;
+export function is<T>(arg1: unknown, arg2: boolean | ((unknown: Partial<T>) => boolean)): boolean {
+    return typeof arg2 === 'function' ? arg2(arg1 as Partial<T>) : Boolean(arg2);
+}
+
+export function serviceIdentifier<T>(name: string): interfaces.ServiceIdentifier<T> {
+    return Symbol(name);
 }

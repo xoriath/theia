@@ -1,5 +1,5 @@
 // *****************************************************************************
-// Copyright (C) 2020 Ericsson and others.
+// Copyright (C) 2022 TypeFox and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -14,12 +14,14 @@
 // SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
 // *****************************************************************************
 
-import { serviceIdentifier } from 'src/common';
-import { NewWindowOptions } from '../common/window';
+import { BrowserWindow } from '@theia/electron/shared/electron';
+import { injectable } from 'inversify';
+import { TestConnection } from '../../electron-common/ipc/electron-test-connection';
 
-export const electronMainWindowServicePath = '/services/electron-window';
-export const ElectronMainWindowService = serviceIdentifier<ElectronMainWindowService>('ElectronMainWindowService');
-export interface ElectronMainWindowService {
-    openNewWindow(url: string, options?: NewWindowOptions): undefined;
-    openNewDefaultWindow(): void;
+@injectable()
+export class TestConnectionImpl implements TestConnection {
+
+    async runTest(): Promise<string[]> {
+        return BrowserWindow.getAllWindows().map(browserWindow => browserWindow.getTitle());
+    }
 }
