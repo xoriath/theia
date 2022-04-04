@@ -11,7 +11,14 @@
 - [core] Move code for untitled resources into `core` from `plugin-ext` and allow users to open untitled editors with `New File` command. [#10868](https://github.com/eclipse-theia/theia/pull/10868)
 
 <a name="breaking_changes_1.25.0">[Breaking Changes:](#breaking_changes_1.25.0)</a>
-
+* [debug, plugin-ext] [Debug view] Add dynamic debug configurations [#10212](https://github.com/eclipse-theia/theia/pull/10212)
+  - Changed signature of `DebugConfigurationManager.find` to receive a target DebugConfiguration instead of a configuration's name.
+    NOTE: The original signature is still available but no longer used inside the framework and therefore marked as `deprecated`
+  - Multiple methods related to the selection of Debug configuration options were relocated from `debug-configuration-widget.tsx` to the new file `debug-configuration-select.tsx`.
+  - Removed optional interface property `DebugConfiguration.dynamic`.
+  - Added the following methods to the interface `DebugService`: `provideDynamicDebugConfigurations` and `fetchDynamicDebugConfiguration` as well as the property `onDidChangedDebugConfigurationProviders`.
+  - Added the following method to the interface `DebugMain`: `onDidChangedDebugConfigurationProviders`
+  - Removed method DebugPrefixConfiguration#runDynamicConfiguration
 
 ## v1.24.0 - 3/31/2022
 
